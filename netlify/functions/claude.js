@@ -1,15 +1,15 @@
 // Netlify Function
-// Keeps the Anthropic API key on the server. Set ANTHROPIC_API_KEY in
-// Site settings -> Environment variables in the Netlify dashboard.
+// Calls Google's Gemini API. Keeps the key on the server.
+// Set GEMINI_API_KEY in Site configuration -> Environment variables.
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Server is missing ANTHROPIC_API_KEY' }) };
+    return { statusCode: 500, body: JSON.stringify({ error: 'Server is missing GEMINI_API_KEY' }) };
   }
 
   try {
@@ -18,30 +18,39 @@ exports.handler = async function (event) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Missing "prompt" in request body' }) };
     }
 
-    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: Math.min(Number(maxTokens) || 1000, 2000),
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
+    const upstream = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: Math.min(Number(maxTokens) || 1000, 2000) },
+        }),
+      }
+    );
 
     const data = await upstream.json();
 
+    if (!upstream.ok) {
+      return { statusCode: upstream.status, body: JSON.stringify(data) };
+    }
+
+    // Normalize Gemini's response into the { content: [{ type: 'text', text }] }
+    // shape the frontend already expects, so index.html needs no changes.
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+
     return {
-      statusCode: upstream.status,
-      body: JSON.stringify(data),
+      statusCode: 200,
+      body: JSON.stringify({ content: [{ type: 'text', text }] }),
     };
   } catch (err) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Server error calling Claude API', detail: String(err) }),
+      body: JSON.stringify({ error: 'Server error calling Gemini API', detail: String(err) }),
     };
   }
 };
