@@ -28,7 +28,10 @@ exports.handler = async function (event) {
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: Math.min(Number(maxTokens) || 1000, 2000) },
+          generationConfig: {
+            maxOutputTokens: Math.min(Number(maxTokens) || 1000, 2000),
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         }),
       }
     );
@@ -42,6 +45,14 @@ exports.handler = async function (event) {
     // Normalize Gemini's response into the { content: [{ type: 'text', text }] }
     // shape the frontend already expects, so index.html needs no changes.
     const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+
+    if (!text) {
+      const finishReason = data?.candidates?.[0]?.finishReason || 'UNKNOWN';
+      return {
+        statusCode: 502,
+        body: JSON.stringify({ error: 'Gemini returned no text', finishReason, raw: data }),
+      };
+    }
 
     return {
       statusCode: 200,
