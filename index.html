@@ -256,7 +256,10 @@
   .topic-time{ display:inline-flex; align-items:center; gap:8px; font-size:15px; color:var(--text-muted); font-weight:600; margin: 18px 0 4px;}
   .topic-actions{ display:flex; flex-direction:column; gap:10px; margin-top:30px;}
   .topic-actions .row2{ display:flex; gap:10px; }
-  .topic-actions .row2 .btn{ flex:1; }
+  .topic-actions .row2 .btn{ flex:1; min-width:0; }
+  @media (max-width:480px){
+    .topic-actions .row2{ flex-direction:column; }
+  }
 
   .prep-box{ margin-top:22px; text-align:left; }
   .prep-box summary{ cursor:pointer; font-size:14px; font-weight:600; color:var(--text-muted); list-style:none; display:flex; align-items:center; gap:8px; padding:6px 0;}
@@ -332,9 +335,6 @@
   .metric-card{ background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:20px 14px; text-align:center; }
   .metric-val{ font-size:24px; font-weight:800; letter-spacing:-0.02em; font-variant-numeric:tabular-nums;}
   .metric-lbl{ font-size:12px; color:var(--text-muted); font-weight:600; margin-top:5px;}
-  .metric-delta{ font-size:11px; font-weight:700; margin-top:6px; display:inline-block; padding:2px 8px; border-radius:var(--radius-pill);}
-  .metric-delta.up{ color:var(--success); background:var(--success-bg);}
-  .metric-delta.down{ color:var(--danger); background:var(--danger-bg);}
 
   .card-block{ background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:24px; margin-bottom:16px;}
   .card-block h3{ font-size:15px; font-weight:700; margin:0 0 12px; display:flex; align-items:center; gap:8px;}
@@ -416,8 +416,6 @@ const state = {
   // results
   analysisLoading: false, analysisError: null,
   results: null,
-  attemptHistory: {}, // topic -> [ {fillerCount,wpm,pace,relevanceScore,ts} ]
-  attemptNumber: 1,
 };
 
 /* ============================= STORAGE / THEME ============================= */
@@ -504,7 +502,7 @@ function renderLanding(){
         ${stepCard('02','Get one topic','One single word or concept to research and think through — no lists, no trick questions.')}
         ${stepCard('03','Speak','Set your time, hit record, and explain it in your own words.')}
         ${stepCard('04','Get feedback','AI analyzes filler words, pacing, relevance, clarity and structure.')}
-        ${stepCard('05','Improve','Try the same topic again and watch your numbers move.')}
+        ${stepCard('05','Improve','Take what you learned into your next topic — and your next.')}
       </div>
     </div>
   </section>
@@ -763,10 +761,24 @@ function goToSpeaking(){
 
 async function requestMicAndStart(){
   try{
-    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    // Just to confirm/trigger the permission prompt and detect denial early.
+    const probeStream = await navigator.mediaDevices.getUserMedia({audio:true});
     state.micState = 'live';
-    setupWaveform(micStream);
-    setupRecognition();
+
+    if(state.recognitionSupported){
+      // Speech recognition needs exclusive access to the mic on many mobile
+      // browsers — a second concurrent getUserMedia stream can silently
+      // block it from ever returning results. Release this probe stream and
+      // use a decorative (non-audio-driven) waveform instead.
+      probeStream.getTracks().forEach(t=>t.stop());
+      animateWaveformDecorative();
+      setupRecognition();
+    } else {
+      // No competing recognition stream — safe to drive the waveform from
+      // real mic input.
+      micStream = probeStream;
+      setupWaveform(micStream);
+    }
     startTimer();
     render();
   }catch(err){
@@ -796,6 +808,17 @@ function animateWaveform(){
     bar.style.height = h + 'px';
   });
   rafId = requestAnimationFrame(animateWaveform);
+}
+function animateWaveformDecorative(){
+  const bars = document.querySelectorAll('#waveform .bar');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(!bars.length){ rafId = requestAnimationFrame(animateWaveformDecorative); return; }
+  const t = Date.now()/1000;
+  bars.forEach((bar, i) => {
+    const h = reduce ? 10 : 8 + Math.abs(Math.sin(t*2.2 + i*0.5)) * 30 + Math.random()*8;
+    bar.style.height = h + 'px';
+  });
+  rafId = requestAnimationFrame(animateWaveformDecorative);
 }
 function stopWaveform(){
   if(rafId) cancelAnimationFrame(rafId);
@@ -1036,12 +1059,6 @@ Only include entries in extraFillers for genuine filler words/phrases NOT alread
     state.results = results;
     state.analysisLoading = false;
 
-    // history for comparisons
-    const key = state.currentTopic.toLowerCase();
-    if(!state.attemptHistory[key]) state.attemptHistory[key] = [];
-    state.attemptNumber = state.attemptHistory[key].length + 1;
-    state.attemptHistory[key].push(results);
-
     render();
   }catch(e){
     state.analysisLoading = false;
@@ -1086,9 +1103,6 @@ function renderResultsScreen(){
     </div>`;
   }
   const r = state.results;
-  const key = state.currentTopic.toLowerCase();
-  const history = state.attemptHistory[key] || [];
-  const prev = history.length >= 2 ? history[history.length-2] : null;
 
   const fillerEntries = Object.entries(r.fillers).filter(([,c])=>c>0).sort((a,b)=>b[1]-a[1]);
 
@@ -1096,14 +1110,14 @@ function renderResultsScreen(){
   <div class="results-wrap fade-up">
     <div class="results-head">
       <h2>Your Results</h2>
-      <p>${escapeHtml(state.currentTopic)} · ${escapeHtml(state.nicheLabel)} · Attempt ${state.attemptNumber}</p>
+      <p>${escapeHtml(state.currentTopic)} · ${escapeHtml(state.nicheLabel)}</p>
     </div>
 
     <div class="metric-grid">
       ${metricCard(fmtTime(Math.round(r.duration)) + ' / ' + fmtTime(r.totalDuration), 'Speaking time', null)}
-      ${metricCard(r.totalFillers, 'Filler words', prev ? deltaBadge(prev.totalFillers, r.totalFillers, true) : null)}
+      ${metricCard(r.totalFillers, 'Filler words', null)}
       ${metricCard(r.pace, 'Speaking pace', null)}
-      ${metricCard(r.relevanceLabel, 'Topic relevance', prev ? deltaBadge(prev.relevanceScore, r.relevanceScore, false) : null)}
+      ${metricCard(r.relevanceLabel, 'Topic relevance', null)}
     </div>
 
     ${fillerEntries.length ? `
@@ -1141,11 +1155,8 @@ function renderResultsScreen(){
       ${r.structureNote ? `<p style="margin-top:12px;">${escapeHtml(r.structureNote)}</p>` : ''}
     </div>
 
-    ${prev ? renderImprovement(prev, r) : ''}
-
     <div class="results-actions">
-      <button class="btn btn-primary btn-lg" onclick="tryAgainSameTopic()">Try again</button>
-      <button class="btn btn-secondary btn-lg" onclick="newTopicSameSetup()">New topic</button>
+      <button class="btn btn-primary btn-lg" onclick="newTopicSameSetup()">New topic</button>
       <button class="btn btn-ghost btn-lg" onclick="goLanding()">Done</button>
     </div>
   </div>`;
@@ -1153,29 +1164,7 @@ function renderResultsScreen(){
 function metricCard(val,lbl,delta){
   return `<div class="metric-card"><div class="metric-val">${val}</div><div class="metric-lbl">${lbl}</div>${delta||''}</div>`;
 }
-function deltaBadge(prevV, curV, lowerIsBetter){
-  const diff = curV - prevV;
-  if(diff === 0) return '';
-  const better = lowerIsBetter ? diff < 0 : diff > 0;
-  const arrow = diff > 0 ? '↑' : '↓';
-  return `<span class="metric-delta ${better?'up':'down'}">${arrow} ${Math.abs(diff)}</span>`;
-}
-function renderImprovement(prev, cur){
-  return `
-  <div class="card-block">
-    <h3>Your improvement</h3>
-    <div style="display:flex; flex-direction:column; gap:10px; font-size:14.5px;">
-      <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Filler words</span><strong>${prev.totalFillers} → ${cur.totalFillers}</strong></div>
-      <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Speaking pace</span><strong>${prev.pace} → ${cur.pace}</strong></div>
-      <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Topic relevance</span><strong>${prev.relevanceScore}% → ${cur.relevanceScore}%</strong></div>
-    </div>
-  </div>`;
-}
 function backToTopicFromResults(){ state.screen='topic'; render(); }
-function tryAgainSameTopic(){
-  state.screen = 'speaking';
-  goToSpeaking();
-}
 function newTopicSameSetup(){
   state.screen = 'topic';
   beginTopicGeneration();
