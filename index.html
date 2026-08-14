@@ -916,7 +916,15 @@ function useManualMode(){ state.micState='live'; state.recognitionSupported=fals
 async function finishSpeaking(){
   clearInterval(state.timerHandle);
   state.actualSpokenSec = Math.max(1, state.duration - Math.max(0,state.timeLeft));
-  if(recognition){ try{ recognition.onend=null; recognition.stop(); }catch(e){} recognition=null; }
+  if(recognition){
+    try{
+      recognition.onend=null;
+      recognition.stop();
+      // give the recognizer a brief moment to flush its last final result
+      await new Promise(r => setTimeout(r, 400));
+    }catch(e){}
+    recognition=null;
+  }
   stopWaveform();
   if(!state.recognitionSupported && !state.manualTranscript){
     // show manual entry screen
@@ -968,7 +976,7 @@ function computePace(transcript, seconds){
   return {words, wpm, pace};
 }
 async function runAnalysis(){
-  const transcript = state.transcriptFinal.trim() || state.manualTranscript.trim();
+  const transcript = (state.transcriptFinal + ' ' + state.transcriptInterim).trim() || state.manualTranscript.trim();
   const clientFillers = detectFillers(transcript);
   const paceInfo = computePace(transcript || '', state.actualSpokenSec);
 
