@@ -19,7 +19,7 @@ exports.handler = async function (event) {
     }
 
     const upstream = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
       {
         method: 'POST',
         headers: {
